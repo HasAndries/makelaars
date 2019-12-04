@@ -12,19 +12,13 @@ using MediatR;
 
 namespace Makelaars.Application.QueryHandlers
 {
-    public class TopMekalaarsQueryHandler : IRequestHandler<TopMakalaarsQuery, TopMakelaarsResult>, IDisposable
+    public class TopMekalaarsQueryHandler : IRequestHandler<TopMakalaarsQuery, TopMakelaarsResult>
     {
         private readonly IFundaApiClient _fundaApiClient;
 
         public TopMekalaarsQueryHandler(IFundaApiClient fundaApiClient)
         {
             _fundaApiClient = fundaApiClient;
-            _fundaApiClient.RateLimitingUpdated += RateLimitingUpdated;
-        }
-
-        public void Dispose()
-        {
-            _fundaApiClient.RateLimitingUpdated -= RateLimitingUpdated;
         }
 
         public async Task<TopMakelaarsResult> Handle(TopMakalaarsQuery request, CancellationToken cancellationToken)
@@ -45,7 +39,7 @@ namespace Makelaars.Application.QueryHandlers
             GetAllOffersResult getAllOffersResult;
             try
             {
-                getAllOffersResult = await _fundaApiClient.GetAllOffers(OfferTypes.Koop, searchCommand.ToString(), cancellationToken, StatusUpdate);
+                getAllOffersResult = await _fundaApiClient.GetAllOffers(OfferTypes.Koop, searchCommand.ToString(), cancellationToken, request.StatusUpdate);
             }
             catch (Exception ex)
             {
@@ -82,21 +76,6 @@ namespace Makelaars.Application.QueryHandlers
                 Status = TopMakelaarsResultStatus.Ok
             };
             return await Task.FromResult(result);
-        }
-
-        private async void StatusUpdate(GetAllOffersStatus status)
-        {
-            Console.Write($"\r{status.CurrentOffers} of {status.TotalOffers} offers fetched");
-            if (status.CurrentOffers == status.TotalOffers)
-            {
-                Console.WriteLine();
-            }
-        }
-
-        private async void RateLimitingUpdated(RateLimitingStatus status)
-        {
-            var rateLimitationText = status.RateLimiting ? "ACTIVE" : "INACTIVE";
-            Console.WriteLine($"\r\nRate limitation: {rateLimitationText}");
         }
     }
 }

@@ -4,7 +4,5 @@
     {
         public int TotalPages { get; set; }
         public int CurrentPage { get; set; }
-        public string NextUrl { get; set; }
-        public string PreviousUrl { get; set; }
     }
 }

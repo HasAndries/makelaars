@@ -88,16 +88,12 @@ namespace Makelaars.Infrastructure.Funda
                         Id = default(Guid),
                         MakelaarId = default(int),
                         MakelaarNaam = default(string),
-                        IsVerkocht = default(bool),
-                        VerkoopStatus = default(string),
                     }
                 },
                 Paging = new
                 {
                     AantalPaginas = default(int),
                     HuidigePagina = default(int),
-                    VolgendeUrl = default(string),
-                    VorigeUrl = default(string)
                 },
                 TotaalAantalObjecten = default(int)
             };
@@ -110,8 +106,6 @@ namespace Makelaars.Infrastructure.Funda
                 {
                     TotalPages = content.Paging.AantalPaginas,
                     CurrentPage = content.Paging.HuidigePagina,
-                    NextUrl = content.Paging.VolgendeUrl,
-                    PreviousUrl = content.Paging.VorigeUrl,
                 };
                 result.TotalObjects = content.TotaalAantalObjecten;
                 if (content.Objects != null)
@@ -121,8 +115,6 @@ namespace Makelaars.Infrastructure.Funda
                         Id = o.Id,
                         MakelaarId = o.MakelaarId,
                         MakelaarNaam = o.MakelaarNaam,
-                        IsVerkocht = o.IsVerkocht,
-                        VerkoopStatus = o.VerkoopStatus,
                     });
                 }
             }
@@ -145,7 +137,7 @@ namespace Makelaars.Infrastructure.Funda
                     lock (offers)
                     {
                         offers.AddRange(pageResult.Offers);
-                        statusUpdate(new GetAllOffersStatus()
+                        statusUpdate?.Invoke(new GetAllOffersStatus()
                         {
                             TotalOffers = initialGetOffersResult.TotalObjects,
                             CurrentOffers = offers.Count
@@ -210,7 +202,7 @@ namespace Makelaars.Infrastructure.Funda
                 _isRateLimiting = isRateLimiting;
             }
 
-            RateLimitingUpdated(new RateLimitingStatus()
+            RateLimitingUpdated?.Invoke(new RateLimitingStatus()
             {
                 RateLimiting = _isRateLimiting
             });

@@ -4,17 +4,27 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Makelaars.Application.Queries;
+using Makelaars.Infrastructure.Funda;
+using Makelaars.Infrastructure.Funda.Results;
 using MediatR;
 
 namespace Makelaars.Application
 {
-    public class MakelaarApplication
+    public class MakelaarApplication : IDisposable
     {
+        private readonly IFundaApiClient _fundaApiClient;
         private readonly IMediator _mediator;
 
-        public MakelaarApplication(IMediator mediator)
+        public MakelaarApplication(IMediator mediator, IFundaApiClient fundaApiClient)
         {
             _mediator = mediator;
+            _fundaApiClient = fundaApiClient;
+            _fundaApiClient.RateLimitingUpdated += RateLimitingUpdated;
+        }
+
+        public void Dispose()
+        {
+            _fundaApiClient.RateLimitingUpdated -= RateLimitingUpdated;
         }
 
         public async Task Run(CancellationToken cancellationToken)
@@ -22,7 +32,8 @@ namespace Makelaars.Application
             var query = new TopMakalaarsQuery()
             {
                 Location = "Amsterdam",
-                WithGarden = false
+                WithGarden = false,
+                StatusUpdate = StatusUpdated
             };
             var result = await _mediator.Send<TopMakelaarsResult>(query, cancellationToken);
             PrintTopMakelaars(query, result);
@@ -34,6 +45,21 @@ namespace Makelaars.Application
             };
             result = await _mediator.Send<TopMakelaarsResult>(query, cancellationToken);
             PrintTopMakelaars(query, result);
+        }
+
+        private void StatusUpdated(GetAllOffersStatus status)
+        {
+            Console.Write($"\r{status.CurrentOffers} of {status.TotalOffers} offers fetched");
+            if (status.CurrentOffers == status.TotalOffers)
+            {
+                Console.WriteLine();
+            }
+        }
+
+        private async void RateLimitingUpdated(RateLimitingStatus status)
+        {
+            var rateLimitationText = status.RateLimiting ? "ACTIVE" : "INACTIVE";
+            Console.WriteLine($"\r\nRate limitation: {rateLimitationText}");
         }
 
         private void PrintTopMakelaars(TopMakalaarsQuery query, TopMakelaarsResult result)

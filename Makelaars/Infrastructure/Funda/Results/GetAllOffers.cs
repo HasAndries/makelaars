@@ -12,6 +12,5 @@ namespace Makelaars.Infrastructure.Funda.Results
     {
         public int TotalOffers { get; set; }
         public int CurrentOffers { get; set; }
-        public bool RateLimited { get; set; }
     }
 }
