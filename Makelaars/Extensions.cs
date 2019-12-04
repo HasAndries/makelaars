@@ -1,5 +1,4 @@
-﻿using System;
-using System.Reflection;
+﻿using System.Reflection;
 using Makelaars.Application;
 using Makelaars.Infrastructure.Funda;
 using MediatR;
@@ -15,7 +14,9 @@ namespace Makelaars
 
             services.AddSingleton(provider => new FundaApiClientOptions
             {
-                ApiKey =  Environment.GetEnvironmentVariable(EnvironmentVariableNames.API_KEY) ?? "ac1b0b1572524640a0ecc54de453ea9f"
+                ApiKey = EnvironmentVariables.API_KEY,
+                ApiUrl = EnvironmentVariables.API_URL,
+                DefaultPageSize = EnvironmentVariables.PAGE_SIZE
             });
             services.AddSingleton<IFundaApiClient, FundaApiClient>();
 

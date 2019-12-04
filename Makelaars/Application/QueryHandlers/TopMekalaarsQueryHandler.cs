@@ -1,4 +1,4 @@
-﻿using System.Collections.Generic;
+﻿using System;
 using System.Linq;
 using System.Text;
 using System.Threading;
@@ -7,51 +7,58 @@ using Makelaars.Application.Models;
 using Makelaars.Application.Queries;
 using Makelaars.Infrastructure.Funda;
 using Makelaars.Infrastructure.Funda.Models;
-using Makelaars.Infrastructure.Funda.Operations;
+using Makelaars.Infrastructure.Funda.Results;
 using MediatR;
 
 namespace Makelaars.Application.QueryHandlers
 {
-    public class TopMekalaarsQueryHandler : IRequestHandler<TopMakalaarsQuery, TopMakelaarsResult>
+    public class TopMekalaarsQueryHandler : IRequestHandler<TopMakalaarsQuery, TopMakelaarsResult>, IDisposable
     {
         private readonly IFundaApiClient _fundaApiClient;
 
         public TopMekalaarsQueryHandler(IFundaApiClient fundaApiClient)
         {
             _fundaApiClient = fundaApiClient;
+            _fundaApiClient.RateLimitingUpdated += RateLimitingUpdated;
+        }
+
+        public void Dispose()
+        {
+            _fundaApiClient.RateLimitingUpdated -= RateLimitingUpdated;
         }
 
         public async Task<TopMakelaarsResult> Handle(TopMakalaarsQuery request, CancellationToken cancellationToken)
         {
-            // Initial call to get paging info
-            var options = BuildGetOffersOptions(request);
-            var initialGetOffersResult = await _fundaApiClient.GetOffers(options, cancellationToken);
-            var totalPages = initialGetOffersResult.Paging.TotalPages;
-            var offers = new List<Offer>();
-            offers.AddRange(initialGetOffersResult.Offers);
+            // Build options with search command
+            var searchCommand = new StringBuilder();
+            if (!string.IsNullOrEmpty(request.Location))
+            {
+                searchCommand.Append($"/{request.Location}");
+            }
+            if (request.WithGarden)
+            {
+                searchCommand.Append("/tuin");
+            }
+            searchCommand.Append("/");
 
-            // Call pages in parallel
-            var parallelOptions = new ParallelOptions()
+            // Get all offers
+            GetAllOffersResult getAllOffersResult;
+            try
             {
-                CancellationToken = cancellationToken,
-                MaxDegreeOfParallelism = 4
-            };
-            Parallel.For(2, totalPages + 1, parallelOptions, async i =>
+                getAllOffersResult = await _fundaApiClient.GetAllOffers(OfferTypes.Koop, searchCommand.ToString(), cancellationToken, StatusUpdate);
+            }
+            catch (Exception ex)
             {
-                var nextOptions = options.Copy().IncreasePage();
-                var nextGetOffersResult = await _fundaApiClient.GetOffers(nextOptions, cancellationToken);
-                if (nextGetOffersResult?.Offers != null)
+                return new TopMakelaarsResult()
                 {
-                    lock (offers)
-                    {
-                        offers.AddRange(nextGetOffersResult.Offers);
-                    }
-                }
-            });
+                    Status = TopMakelaarsResultStatus.Error,
+                    Error = ex
+                };
+            }
 
             // Build makelaar list
             var rank = 1;
-            var makelaars = offers
+            var makelaars = getAllOffersResult.Offers
                 .GroupBy(o => o.MakelaarId)
                 .Select(g => new TopMakelaar
                 {
@@ -66,7 +73,8 @@ namespace Makelaars.Application.QueryHandlers
                     m.Rank = rank;
                     rank++;
                     return m;
-                });
+                })
+                .ToArray();
 
             var result = new TopMakelaarsResult
             {
@@ -76,24 +84,19 @@ namespace Makelaars.Application.QueryHandlers
             return await Task.FromResult(result);
         }
 
-        private GetOffersOptions BuildGetOffersOptions(TopMakalaarsQuery request)
+        private async void StatusUpdate(GetAllOffersStatus status)
         {
-            var searchCommand = new StringBuilder();
-            if (!string.IsNullOrEmpty(request.Location))
+            Console.Write($"\r{status.CurrentOffers} of {status.TotalOffers} offers fetched");
+            if (status.CurrentOffers == status.TotalOffers)
             {
-                searchCommand.Append($"/{request.Location}");
+                Console.WriteLine();
             }
-            if (request.WithGarden)
-            {
-                searchCommand.Append("/tuin");
-            }
-            searchCommand.Append("/");
+        }
 
-            return new GetOffersOptions
-            {
-                Type = OfferTypes.Koop,
-                SearchCommand = searchCommand.ToString()
-            };
+        private async void RateLimitingUpdated(RateLimitingStatus status)
+        {
+            var rateLimitationText = status.RateLimiting ? "ACTIVE" : "INACTIVE";
+            Console.WriteLine($"\r\nRate limitation: {rateLimitationText}");
         }
     }
 }

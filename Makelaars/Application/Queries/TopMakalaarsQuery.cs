@@ -1,4 +1,5 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
 using Makelaars.Application.Models;
 using MediatR;
 
@@ -14,10 +15,12 @@ namespace Makelaars.Application.Queries
     {
         public IEnumerable<TopMakelaar> Makelaars { get; set; }
         public TopMakelaarsResultStatus Status { get; set; }
+        public Exception Error { get; set; }
     }
 
     public enum TopMakelaarsResultStatus
     {
-        Ok
+        Ok,
+        Error
     }
 }

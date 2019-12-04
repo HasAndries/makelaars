@@ -1,21 +1,30 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Threading;
 using System.Threading.Tasks;
 using Makelaars.Infrastructure.Funda.Models;
-using Makelaars.Infrastructure.Funda.Operations;
+using Makelaars.Infrastructure.Funda.Results;
 using Newtonsoft.Json;
+using Polly;
+using Polly.Wrap;
 
 namespace Makelaars.Infrastructure.Funda
 {
     public class FundaApiClient : IFundaApiClient, IDisposable
     {
+        private const int DefaultPage = 1;
+        private const int MaxPageSize = 25;
+
         private readonly HttpClient _httpClient;
         private readonly FundaApiClientOptions _options;
-        
+        private readonly AsyncPolicyWrap<HttpResponseMessage> _retryPolicy;
+        private readonly object _lock = new object();
+        private bool _isRateLimiting;
+
         public FundaApiClient(FundaApiClientOptions options)
         {
             if (string.IsNullOrEmpty(options.ApiUrl))
@@ -26,11 +35,17 @@ namespace Makelaars.Infrastructure.Funda
             {
                 throw new ArgumentNullException(nameof(options.ApiKey));
             }
+            if (options.DefaultPageSize > MaxPageSize)
+            {
+                throw new ArgumentOutOfRangeException(nameof(options.DefaultPageSize), options.DefaultPageSize, $"Page size cannot be larger than the maximum page size({MaxPageSize})");
+            }
             _options = options;
 
             _httpClient = new HttpClient();
             _httpClient.DefaultRequestHeaders.Clear();
             _httpClient.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+
+            _retryPolicy = CreateRetryPolicy();
         }
 
         public void Dispose()
@@ -38,31 +53,35 @@ namespace Makelaars.Infrastructure.Funda
             _httpClient?.Dispose();
         }
 
-        public async Task<GetOffersResult> GetOffers(GetOffersOptions options, CancellationToken cancellationToken)
+        public async Task<GetOffersResult> GetOffers(OfferTypes? type, string searchCommand, int? page, int? pageSize, CancellationToken cancellationToken)
         {
-            // Make request
+            // Build request URL
+            pageSize ??= _options.DefaultPageSize;
+            pageSize = Math.Min(pageSize.Value, MaxPageSize);
             var parameters = new List<string>()
             {
-                $"page={options.Page}",
-                $"PageSize={options.PageSize}"
+                $"page={page ?? DefaultPage}",
+                $"PageSize={pageSize}"
             };
-            if (options.Type != null)
+            if (type != null)
             {
-                var type = FirstCharLower($"{options.Type}");
-                parameters.Add($"type={type}");
+                var typeString = FirstCharLower($"{type}");
+                parameters.Add($"type={typeString}");
             }
-            if (options.SearchCommand != null)
+            if (searchCommand != null)
             {
-                parameters.Add($"zo={options.SearchCommand}");
+                parameters.Add($"zo={searchCommand}");
             }
             var requestUrl = BuildRequestUrl("/feeds/Aanbod.svc", parameters);
-            using var response = await _httpClient.GetAsync(requestUrl, cancellationToken);
 
-            // Build result
+            // Make request
+            using var response = await _retryPolicy.ExecuteAsync(async () => await _httpClient.GetAsync(requestUrl, cancellationToken));
+
+            // Get content from response body
             var contentString = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
             var content = new
             {
-                Objects = new []
+                Objects = new[]
                 {
                     new
                     {
@@ -83,10 +102,8 @@ namespace Makelaars.Infrastructure.Funda
                 TotaalAantalObjecten = default(int)
             };
             content = JsonConvert.DeserializeAnonymousType(contentString, content);
-            var result = new GetOffersResult
-            {
-                StatusCode = response.StatusCode
-            };
+            var result = new GetOffersResult();
+            // Build result from content
             if (content != null)
             {
                 result.Paging = new PagingInfo
@@ -113,7 +130,59 @@ namespace Makelaars.Infrastructure.Funda
             return result;
         }
 
-        private string BuildRequestUrl(string servicePath, List<string> parameters)
+        public async Task<GetAllOffersResult> GetAllOffers(OfferTypes? type, string searchCommand, CancellationToken cancellationToken, Action<GetAllOffersStatus> statusUpdate)
+        {
+            // Initial call to get first page results and paging info
+            var initialGetOffersResult = await GetOffers(type, searchCommand, 1, null, cancellationToken);
+            var offers = initialGetOffersResult.Offers.ToList();
+
+            // Call rest of pages in parallel
+            var tasks = Enumerable.Range(2, initialGetOffersResult.Paging.TotalPages).Select(async pageNumber =>
+            {
+                var pageResult = await GetOffers(type, searchCommand, pageNumber, null, cancellationToken);
+                if (pageResult?.Offers != null)
+                {
+                    lock (offers)
+                    {
+                        offers.AddRange(pageResult.Offers);
+                        statusUpdate(new GetAllOffersStatus()
+                        {
+                            TotalOffers = initialGetOffersResult.TotalObjects,
+                            CurrentOffers = offers.Count
+                        });
+                    }
+                }
+            });
+            await Task.WhenAll(tasks);
+            return new GetAllOffersResult()
+            {
+                Offers = offers
+            };
+        }
+
+        public event Action<RateLimitingStatus> RateLimitingUpdated;
+
+        private AsyncPolicyWrap<HttpResponseMessage> CreateRetryPolicy()
+        {
+            var rateLimitPolicy = Policy
+                .HandleResult<HttpResponseMessage>(responseMessage =>
+                {
+                    SetRateLimiting(IsRateLimiting(responseMessage));
+                    return _isRateLimiting;
+                })
+                .WaitAndRetryForeverAsync(i => TimeSpan.FromSeconds(5), onRetryAsync: async (result, timeSpan) =>
+                {
+                    SetRateLimiting(IsRateLimiting(result.Result));
+                });
+            var transientErrorPolicy = Policy
+                .HandleResult<HttpResponseMessage>(r => (int)r.StatusCode >= 500)
+                .Or<HttpRequestException>()
+                .WaitAndRetryAsync(10, i => TimeSpan.FromSeconds(i * 2));
+
+            return Policy.WrapAsync(rateLimitPolicy, transientErrorPolicy);
+        }
+
+        private string BuildRequestUrl(string servicePath, IEnumerable<string> parameters)
         {
             var uriBuilder = new UriBuilder(_options.ApiUrl)
             {
@@ -126,6 +195,25 @@ namespace Makelaars.Infrastructure.Funda
         private string FirstCharLower(string s)
         {
             return string.IsNullOrEmpty(s) ? s : $"{s.Substring(0, 1).ToLower()}{s.Substring(1)}";
+        }
+
+        public static bool IsRateLimiting(HttpResponseMessage responseMessage)
+        {
+            return responseMessage.StatusCode == HttpStatusCode.Unauthorized && responseMessage.ReasonPhrase == "Request limit exceeded";
+        }
+
+        private void SetRateLimiting(bool isRateLimiting)
+        {
+            lock (_lock)
+            {
+                if (_isRateLimiting == isRateLimiting) return;
+                _isRateLimiting = isRateLimiting;
+            }
+
+            RateLimitingUpdated(new RateLimitingStatus()
+            {
+                RateLimiting = _isRateLimiting
+            });
         }
     }
 }

@@ -3,6 +3,7 @@
     public class FundaApiClientOptions
     {
         public string ApiKey { get; set; }
-        public string ApiUrl { get; set; } = "http://partnerapi.funda.nl";
+        public string ApiUrl { get; set; }
+        public int DefaultPageSize { get; set; }
     }
 }
