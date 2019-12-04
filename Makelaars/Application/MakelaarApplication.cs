@@ -41,7 +41,8 @@ namespace Makelaars.Application
             query = new TopMakalaarsQuery()
             {
                 Location = "Amsterdam",
-                WithGarden = true
+                WithGarden = true,
+                StatusUpdate = StatusUpdated
             };
             result = await _mediator.Send<TopMakelaarsResult>(query, cancellationToken);
             PrintTopMakelaars(query, result);
