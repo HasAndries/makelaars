@@ -162,9 +162,10 @@ namespace Makelaars.Infrastructure.Funda
                     SetRateLimiting(IsRateLimiting(responseMessage));
                     return _isRateLimiting;
                 })
-                .WaitAndRetryForeverAsync(i => TimeSpan.FromSeconds(5), onRetryAsync: async (result, timeSpan) =>
+                .WaitAndRetryForeverAsync(i => TimeSpan.FromSeconds(5), onRetryAsync: (result, timeSpan) =>
                 {
                     SetRateLimiting(IsRateLimiting(result.Result));
+                    return Task.CompletedTask;
                 });
             var transientErrorPolicy = Policy
                 .HandleResult<HttpResponseMessage>(r => (int)r.StatusCode >= 500)

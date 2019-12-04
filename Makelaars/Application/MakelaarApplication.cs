@@ -56,7 +56,7 @@ namespace Makelaars.Application
             }
         }
 
-        private async void RateLimitingUpdated(RateLimitingStatus status)
+        private void RateLimitingUpdated(RateLimitingStatus status)
         {
             var rateLimitationText = status.RateLimiting ? "ACTIVE" : "INACTIVE";
             Console.WriteLine($"\r\nRate limitation: {rateLimitationText}");
